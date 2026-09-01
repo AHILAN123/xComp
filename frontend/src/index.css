@@ -7,8 +7,153 @@
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
+:root {
+  --app-bg: #f4f4f5;
+  --surface: #ffffff;
+  --subtle-surface: #fafafa;
+  --surface-translucent: rgba(255, 255, 255, 0.88);
+  --editor-bg: #ffffff;
+  --graph-bg: #f7f7f8;
+  --text: #18181b;
+  --muted: #71717a;
+  --muted-strong: #52525b;
+  --border: #e4e4e7;
+  --control-bg: #f4f4f5;
+  --control-active: #f4f4f5;
+  --control-hover: #e4e4e7;
+  --control-border: #d4d4d8;
+  --button-bg: #18181b;
+  --button-hover: #3f3f46;
+  --button-text: #ffffff;
+  --graph-grid: #d4d4d8;
+  --graph-edge: #71717a;
+  --graph-edge-block: #3b82f6;
+  --graph-edge-yield: #f59e0b;
+  --graph-edge-return: #18181b;
+  --graph-node-bg: #ffffff;
+  --graph-node-border: #d4d4d8;
+  --graph-node-text: #27272a;
+  --graph-container-bg: rgba(250, 250, 250, 0.8);
+  --graph-container-inner: rgba(255, 255, 255, 0.35);
+  --graph-container-border: #d4d4d8;
+  --graph-header-bg: rgba(255, 255, 255, 0.9);
+  --graph-block-bg: #eef2ff;
+  --graph-block-border: #c7d2fe;
+  --graph-input-bg: #eff6ff;
+  --graph-input-border: #bfdbfe;
+  --graph-input-zone-bg: rgba(240, 253, 244, 0.72);
+  --graph-input-zone-border: #86efac;
+  --graph-input-zone-text: #166534;
+  --graph-output-bg: #fef2f2;
+  --graph-output-border: #fca5a5;
+  --graph-output-zone-bg: rgba(254, 242, 242, 0.78);
+  --graph-output-zone-border: #fca5a5;
+  --graph-output-zone-text: #991b1b;
+  --graph-constants-bg: #fffbeb;
+  --graph-constants-border: #fcd34d;
+  --graph-constants-text: #92400e;
+  --graph-focus: #0f766e;
+  --graph-focus-ring: rgba(20, 184, 166, 0.2);
+  --graph-focus-shadow: rgba(15, 118, 110, 0.28);
+  --graph-trace: #c2410c;
+  --graph-trace-ring: rgba(249, 115, 22, 0.22);
+  --graph-trace-shadow: rgba(194, 65, 12, 0.28);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #111113;
+  --surface: #18181b;
+  --subtle-surface: #202023;
+  --surface-translucent: rgba(24, 24, 27, 0.92);
+  --editor-bg: #1e1e1e;
+  --graph-bg: #121316;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --muted-strong: #d4d4d8;
+  --border: #3f3f46;
+  --control-bg: #27272a;
+  --control-active: #3f3f46;
+  --control-hover: #52525b;
+  --control-border: #52525b;
+  --button-bg: #f4f4f5;
+  --button-hover: #d4d4d8;
+  --button-text: #18181b;
+  --graph-grid: #3f3f46;
+  --graph-edge: #a1a1aa;
+  --graph-edge-block: #60a5fa;
+  --graph-edge-yield: #fbbf24;
+  --graph-edge-return: #f4f4f5;
+  --graph-node-bg: #27272a;
+  --graph-node-border: #52525b;
+  --graph-node-text: #f4f4f5;
+  --graph-container-bg: rgba(39, 39, 42, 0.86);
+  --graph-container-inner: rgba(24, 24, 27, 0.38);
+  --graph-container-border: #71717a;
+  --graph-header-bg: rgba(39, 39, 42, 0.94);
+  --graph-block-bg: #252c4a;
+  --graph-block-border: #6673b5;
+  --graph-input-bg: #1e3551;
+  --graph-input-border: #5685b8;
+  --graph-input-zone-bg: rgba(20, 83, 45, 0.52);
+  --graph-input-zone-border: #4ade80;
+  --graph-input-zone-text: #bbf7d0;
+  --graph-output-bg: #4a2528;
+  --graph-output-border: #f87171;
+  --graph-output-zone-bg: rgba(127, 29, 29, 0.45);
+  --graph-output-zone-border: #f87171;
+  --graph-output-zone-text: #fecaca;
+  --graph-constants-bg: #493b1f;
+  --graph-constants-border: #fbbf24;
+  --graph-constants-text: #fde68a;
+  --graph-focus: #5eead4;
+  --graph-focus-ring: rgba(45, 212, 191, 0.25);
+  --graph-focus-shadow: rgba(20, 184, 166, 0.35);
+  --graph-trace: #fb923c;
+  --graph-trace-ring: rgba(249, 115, 22, 0.3);
+  --graph-trace-shadow: rgba(234, 88, 12, 0.38);
+}
+
 body {
   font-family: var(--font-sans);
-  background-color: #fbfbfb; /* off-white / light gray */
-  color: #171717; /* off-black */
+  background-color: var(--app-bg);
+  color: var(--text);
+  margin: 0;
 }
+
+button, input { font: inherit; }
+.react-flow__controls-button { background: var(--surface); border-color: var(--border); fill: var(--text); color: var(--text); }
+.react-flow__controls-button:hover { background: var(--control-hover); }
+.react-flow__attribution { background: var(--surface-translucent); color: var(--muted); }
+.graph-edge-focused { z-index: 2; }
+.graph-edge-muted { filter: saturate(0.45); }
+.tensor-empty-node { background: var(--graph-constants-bg) !important; border-color: var(--graph-constants-border) !important; color: var(--graph-constants-text); }
+.function-operation-node { background: var(--graph-node-bg) !important; border-color: var(--graph-node-border) !important; }
+.graph-edge-flow path { stroke-dasharray: 7 6; }
+.graph-edge-flow-active path {
+  animation: graph-flow-forward 900ms linear infinite;
+}
+.graph-edge-muted path { animation: none !important; }
+@keyframes graph-flow-forward { to { stroke-dashoffset: -13; } }
+.arithmetic-node { position: relative; width: 76px; height: 76px; display: flex; align-items: center; justify-content: center; }
+.react-flow__node-arithmetic {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+.arithmetic-node-shape {
+  width: 54px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(45deg);
+  background: #d97757;
+  border: 1px solid color-mix(in srgb, #d97757 72%, #000 28%);
+  border-radius: 6px;
+  box-shadow: 0 3px 8px rgba(93, 47, 33, 0.22);
+  transition: opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease;
+}
+.arithmetic-node-shape span { transform: rotate(-45deg); color: #fffaf7; font: 600 18px var(--font-mono); }
+.arithmetic-node > .react-flow__handle { z-index: 2; }

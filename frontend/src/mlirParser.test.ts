@@ -38,7 +38,7 @@ func.func @f(%arg0: tensor<f32>) -> tensor<f32> {
 
 describe('MLIR Parser - MyModel Ordered Mapping', () => {
   const { nodes, edges } = parseMLIRToGraph(MY_MODEL);
-  const container = nodes.find(n => n.type === 'regionOp' && n.data.label.includes('linalg.generic'));
+  const container = nodes.find(n => n.type === 'regionOp' && String((n.data as any).label).includes('linalg.generic'));
   const cid = container?.id;
 
   test('ordered mapping from operands to block args', () => {
@@ -63,7 +63,7 @@ describe('MLIR Parser - MyModel Ordered Mapping', () => {
 
 describe('MLIR Parser - Core Graph Validation', () => {
   const { nodes, edges } = parseMLIRToGraph(MY_MODEL);
-  const container = nodes.find(n => n.type === 'regionOp' && n.data.label.includes('linalg.generic'));
+  const container = nodes.find(n => n.type === 'regionOp' && String((n.data as any).label).includes('linalg.generic'));
   const cid = container?.id;
 
   test('function arguments are placed in a rigid Inputs section', () => {
@@ -156,7 +156,7 @@ describe('PyTorch Argument Name Mapping & Formatting', () => {
   test('label display formatting when toggle is ON vs OFF', () => {
     const { nodes } = parseMLIRToGraph(MY_MODEL);
     const pythonCode = `class MyModel:\n  def forward(self, x, w, b):\n    y = torch.matmul(x, w)\n    return torch.relu(y + b)`;
-    const ssaMap = buildSSADisplayNameMap(pythonCode, MY_MODEL, nodes);
+    const { ssaMap, opLabelMap: _opLabelMap } = buildSSADisplayNameMap(pythonCode, MY_MODEL, nodes);
 
     const getLabel = (node: any, showPyTorchNames: boolean) => {
       if (node.type === 'input' || node.data?.isFuncArg) {
@@ -197,5 +197,91 @@ describe('PyTorch Argument Name Mapping & Formatting', () => {
     const container = nodes.find(n => n.type === 'regionOp')!;
     expect(hasEdge(parseMLIRToGraph(MY_MODEL).edges, '%2', `${container.id}::%in`)).toBe(true);
     expect(hasEdge(parseMLIRToGraph(MY_MODEL).edges, '%arg2', `${container.id}::%in_0`)).toBe(true);
+
+    // The fixture contains an addition generic; source matching is based on
+    // its operands, not on its SSA number or graph position.
+    const { opLabelMap: opLabelMapWithMeta } = buildSSADisplayNameMap(pythonCode, MY_MODEL, nodes, {
+      args: ['x', 'w', 'b'],
+      expressions: [
+        { id: 0, op: 'matmul', display: 'x @ w', valueName: 'y', assignedName: 'y', inputs: ['x', 'w'] },
+        { id: 1, op: 'add', display: 'y + b', valueName: 'y + b', inputs: ['y', 'b'] },
+      ],
+    });
+    expect(opLabelMapWithMeta[container.id]).toBe('y + b');
+  });
+});
+
+describe('generalized composite source display', () => {
+  test('maps a sigmoid region to one source-level operation and preserves implementation nodes', () => {
+    const mlir = `
+func.func @forward(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+  %c0 = arith.constant 0.0 : f32
+  %r = linalg.generic ins(%arg0 : tensor<4xf32>) outs(%arg0 : tensor<4xf32>) {
+  ^bb0(%in: f32, %out: f32):
+    %n = arith.negf %in : f32
+    %e = math.exp %n : f32
+    %one = arith.constant 1.0 : f32
+    %a = arith.addf %one, %e : f32
+    %s = arith.divf %one, %a : f32
+    linalg.yield %s : f32
+  } -> tensor<4xf32>
+  return %r : tensor<4xf32>
+}`;
+    const { nodes, edges } = parseMLIRToGraph(mlir);
+    const { ssaMap, opLabelMap } = buildSSADisplayNameMap(
+      'def forward(self, x):\n    return torch.sigmoid(x)',
+      mlir,
+      nodes,
+      { args: ['x'], expressions: [{ id: 0, op: 'sigmoid', display: 'sigmoid(x)', valueName: 'sigmoid(x)', inputs: ['x'] }] },
+    );
+    const region = nodes.find(node => node.type === 'regionOp')!;
+    expect(opLabelMap[region.id]).toBe('sigmoid(x)');
+    expect(ssaMap['%arg0']).toBe('x');
+    expect(edges.some(edge => edge.source === '%arg0')).toBe(true);
+    expect(nodes.some(node => node.data?.rawOp === 'arith.negf')).toBe(true);
+    expect(nodes.some(node => node.data?.rawOp === 'math.exp')).toBe(true);
+  });
+
+  test('creates a display-only constants group and keeps constants connected', () => {
+    const mlir = `
+func.func @forward(%arg0: tensor<f32>) -> tensor<f32> {
+  %c0 = arith.constant 0.0 : f32
+  %c2 = arith.constant 2.0 : f32
+  %r = arith.addf %arg0, %c2 : f32
+  return %r : tensor<f32>
+}`;
+    const { nodes, edges } = parseMLIRToGraph(mlir);
+    const group = nodes.find(node => (node.data as any)?.isConstantsGroup);
+    expect(group).toBeDefined();
+    const constants = nodes.filter(node => node.data?.rawOp === 'arith.constant');
+    expect(constants).toHaveLength(2);
+    expect(constants.every(node => node.parentId === group!.id)).toBe(true);
+    expect(edges.some(edge => edge.source === '%c2')).toBe(true);
+  });
+});
+
+describe('region input and output zones', () => {
+  test('classifies block arguments from ins/outs operands and preserves edges', () => {
+    const mlir = `
+func.func @forward(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<f32> {
+  %r = linalg.generic ins(%arg0, %arg1 : tensor<f32>, tensor<f32>) outs(%arg0 : tensor<f32>) {
+  ^bb0(%left: f32, %right: f32, %destination: f32):
+    %sum = arith.addf %left, %right : f32
+    linalg.yield %sum : f32
+  } -> tensor<f32>
+  return %r : tensor<f32>
+}`;
+    const { nodes, edges } = parseMLIRToGraph(mlir);
+    const region = nodes.find(node => node.type === 'regionOp')!;
+    const children = nodes.filter(node => node.parentId === region.id);
+    const inputArgs = children.filter(node => (node.data as any)?.isBlockArg && !(node.data as any).isOutputBlockArg);
+    const outputArgs = children.filter(node => (node.data as any)?.isBlockArg && (node.data as any).isOutputBlockArg);
+    expect(inputArgs.map(node => (node.data as any).rawLabel)).toEqual(['%left', '%right']);
+    expect(outputArgs.map(node => (node.data as any).rawLabel)).toEqual(['%destination']);
+    expect(inputArgs.every(node => node.position.y === 58)).toBe(true);
+    expect(outputArgs.every(node => node.position.y > 58)).toBe(true);
+    expect(edges.some(edge => edge.target === inputArgs[0].id)).toBe(true);
+    expect(edges.some(edge => edge.target === inputArgs[1].id)).toBe(true);
+    expect(edges.some(edge => edge.target === region.id && edge.targetHandle === 'result')).toBe(true);
   });
 });

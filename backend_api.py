@@ -6,6 +6,7 @@ import json
 import uuid
 import subprocess
 import re
+import ast
 from pathlib import Path
 from pydantic import BaseModel
 
@@ -23,6 +24,90 @@ RUNS_DIR = Path("runs")
 class CompileRequest(BaseModel):
     code: str
 
+
+def extract_source_metadata(code: str) -> dict:
+    """Create source annotations without changing or inspecting the MLIR."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {"args": [], "expressions": []}
+
+    forward = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "forward"), None)
+    if forward is None:
+        return {"args": [], "expressions": []}
+
+    args = [a.arg for a in forward.args.args if a.arg not in {"self", "cls"}]
+    expressions = []
+    next_id = 0
+    bindings = set(args)
+
+    binary = {
+        ast.Add: ("add", "+"), ast.Sub: ("sub", "-"), ast.Mult: ("mul", "*"),
+        ast.Div: ("div", "/"), ast.MatMult: ("matmul", "@"), ast.Pow: ("pow", "**"),
+    }
+    call_symbols = {"add": "+", "sub": "-", "mul": "*", "div": "/", "matmul": "@", "mm": "@", "bmm": "@"}
+
+    def visit_expr(node):
+        nonlocal next_id
+        if isinstance(node, ast.Name):
+            return node.id, node.id, None
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            value = str(node.value)
+            return value, value, None
+        if isinstance(node, ast.BinOp) and type(node.op) in binary:
+            left = visit_expr(node.left)
+            right = visit_expr(node.right)
+            op, symbol = binary[type(node.op)]
+            display = f"{left[1]} {symbol} {right[1]}"
+            value_key = display
+            expressions.append({"id": f"expr_{next_id}", "op": op, "display": display,
+                                "valueName": value_key, "inputs": [left[0], right[0]]})
+            next_id += 1
+            return value_key, display, op
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            inner = visit_expr(node.operand)
+            display = f"-{inner[1]}"
+            expressions.append({"id": f"expr_{next_id}", "op": "neg", "display": display,
+                                "valueName": display, "inputs": [inner[0]]})
+            next_id += 1
+            return display, display, "neg"
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                name = node.func.id
+            else:
+                name = "call"
+            values = [visit_expr(arg) for arg in node.args]
+            symbol = call_symbols.get(name)
+            display = f"{values[0][1]} {symbol} {values[1][1]}" if symbol and len(values) >= 2 else f"{name}({', '.join(v[1] for v in values)})"
+            expressions.append({"id": f"expr_{next_id}", "op": name, "display": display,
+                                "valueName": display, "inputs": [v[0] for v in values]})
+            next_id += 1
+            return display, display, name
+        return ast.unparse(node), ast.unparse(node), None
+
+    for statement in forward.body:
+        if isinstance(statement, ast.Assign) and isinstance(statement.targets[0], ast.Name):
+            target = statement.targets[0].id
+            expression_start = len(expressions)
+            value_key, display, op = visit_expr(statement.value)
+            if len(expressions) > expression_start:
+                # The root operation already contains the real source inputs.
+                # Promote it to the Python assignment's SSA-level value instead
+                # of wrapping it in a synthetic operation.
+                root = expressions[-1]
+                root["valueName"] = target
+                root["assignedName"] = target
+            else:
+                expressions.append({"id": f"expr_{next_id}", "op": op or "value", "display": display,
+                                    "valueName": target, "assignedName": target, "inputs": [value_key]})
+                next_id += 1
+            bindings.add(target)
+        elif isinstance(statement, ast.Return) and statement.value is not None:
+            visit_expr(statement.value)
+    return {"args": args, "expressions": expressions}
+
 @app.options("/api/compile")
 def compile_options():
     return {"status": "ok"}
@@ -34,11 +119,19 @@ def compile_code(req: CompileRequest):
     run_dir.mkdir(parents=True, exist_ok=True)
     stages_dir = run_dir / "stages" / "02_linalg"
     stages_dir.mkdir(parents=True, exist_ok=True)
+
+    source_metadata = extract_source_metadata(req.code)
+    (run_dir / "pytorch_source_meta.json").write_text(json.dumps(source_metadata))
+    
+    # Serialize user code as a safe Python string literal for use inside the wrapper
+    user_code_repr = repr(req.code)
     
     wrapper_code = f"""import os
 import sys
 import json
 import inspect
+import ast
+import textwrap
 import torch
 import torch_mlir
 from torch_mlir.passmanager import PassManager
@@ -49,20 +142,52 @@ from torch_mlir.passmanager import PassManager
 
 try:
     pytorch_args = []
+    pytorch_source_meta = {{"args": [], "assignments": [], "ops": []}}
     if 'model' in locals():
         m = locals()['model']
+        sig = None
         if hasattr(m, 'forward') and callable(m.forward):
             sig = inspect.signature(m.forward)
-            for p in sig.parameters.values():
-                if p.name not in ('self', 'cls'):
-                    pytorch_args.append(p.name)
         elif callable(m):
             sig = inspect.signature(m)
+        if sig:
             for p in sig.parameters.values():
                 if p.name not in ('self', 'cls'):
                     pytorch_args.append(p.name)
+                    pytorch_source_meta["args"].append(p.name)
+
+    # Parse source assignments and operations from user code
+    user_code = textwrap.dedent({user_code_repr})
+    try:
+        tree = ast.parse(user_code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'forward':
+                for stmt in ast.walk(node):
+                    if isinstance(stmt, ast.Assign):
+                        lhs_names = []
+                        for t in stmt.targets:
+                            if isinstance(t, ast.Name):
+                                lhs_names.append(t.id)
+                        if lhs_names:
+                            rhs_src = ast.unparse(stmt.value)
+                            rhs_idents = [n.id for n in ast.walk(stmt.value) if isinstance(n, ast.Name)]
+                            pytorch_source_meta["assignments"].append({{
+                                "lhs": lhs_names[0],
+                                "rhs": rhs_src,
+                                "rhs_idents": list(dict.fromkeys(rhs_idents))
+                            }})
+                    if isinstance(stmt, ast.Return) and stmt.value:
+                        pytorch_source_meta["ops"].append({{
+                            "kind": "return",
+                            "expr": ast.unparse(stmt.value)
+                        }})
+    except Exception:
+        pass
+
     with open("{str(run_dir.resolve())}/pytorch_args.json", "w") as f:
         json.dump(pytorch_args, f)
+    with open("{str(run_dir.resolve())}/pytorch_source_meta_runtime.json", "w") as f:
+        json.dump(pytorch_source_meta, f)
 except Exception:
     pass
 
@@ -146,7 +271,16 @@ except Exception as e:
         except Exception:
             pass
 
-    return {"id": run_id, "pytorch_args": pytorch_args}
+    pytorch_source_meta_file = run_dir / "pytorch_source_meta.json"
+    pytorch_source_meta = {}
+    if pytorch_source_meta_file.exists():
+        try:
+            with open(pytorch_source_meta_file, "r") as f:
+                pytorch_source_meta = json.load(f)
+        except Exception:
+            pass
+
+    return {"id": run_id, "pytorch_args": pytorch_args, "pytorch_source_meta": pytorch_source_meta}
 
 @app.get("/api/runs")
 def get_runs():
@@ -183,7 +317,16 @@ def get_run_details(run_id: str):
         except Exception:
             pass
 
-    return {"id": run_id, "events": events, "pytorch_args": pytorch_args}
+    pytorch_source_meta_file = run_dir / "pytorch_source_meta.json"
+    pytorch_source_meta = {}
+    if pytorch_source_meta_file.exists():
+        try:
+            with open(pytorch_source_meta_file, "r") as f:
+                pytorch_source_meta = json.load(f)
+        except Exception:
+            pass
+
+    return {"id": run_id, "events": events, "pytorch_args": pytorch_args, "pytorch_source_meta": pytorch_source_meta}
 
 @app.get("/api/runs/{run_id}/file")
 def get_run_file(run_id: str, path: str):
