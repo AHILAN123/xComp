@@ -1,0 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+--find-links https://llvm.github.io/torch-mlir/package-index/
+
+torch==2.3.0.dev20240122+cpu
+torch-mlir==20240127.1096
+fastapi
+uvicorn
+pydantic

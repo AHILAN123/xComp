@@ -1,0 +1,7 @@
+{"type": "run_start", "run_id": "run_ab39d80d"}
+{"type": "pass_start", "pass": "canonicalize", "stage": "linalg"}
+{"type": "snapshot", "kind": "before", "pass": "canonicalize", "path": "runs/run_ab39d80d/stages/02_linalg/00_before_canonicalize.mlir"}
+{"type": "pass_start", "pass": "cse", "stage": "linalg"}
+{"type": "snapshot", "kind": "before", "pass": "cse", "path": "runs/run_ab39d80d/stages/02_linalg/01_before_cse.mlir"}
+{"type": "pass_end", "pass": "cse"}
+{"type": "run_end", "run_id": "run_ab39d80d"}
