@@ -9,21 +9,37 @@ AI Compiler Optimization Explorer is an interactive tool designed to visualize c
 
 ## Setup
 
+> **Platform requirement:** `torch-mlir` only publishes nightly wheels for **Linux x86_64**.
+> This project will **not** install on macOS (Intel or Apple Silicon) or on ARM64 Linux
+> (including Apple Silicon Macs running an ARM64 Ubuntu VM).
+> Recommended: [GitHub Codespaces](https://github.com/features/codespaces), or a native/emulated x86_64 Ubuntu machine.
+> Run `uname -m` in your target environment first — it must print `x86_64`, not `arm64`/`aarch64`.
+
 1. Create and activate a Python virtual environment:
-   ```bash
+```bash
    uv venv .venv --python 3.11
    source .venv/bin/activate
-   ```
+```
 
 2. Install Python dependencies:
-   ```bash
+```bash
    pip install -r requirements.txt
-   ```
+```
+   This installs the exact, known-working versions we've locked in `requirements.txt`.
+
+   If this fails with a "no matching distribution" or "could not find a version" error,
+   it likely means the pinned nightly builds have been rotated out of PyTorch/torch-mlir's
+   servers (these are dated nightlies and get deleted after a few weeks). Regenerate the lock:
+```bash
+   pip install -r requirements.in
+   pip freeze > requirements.txt
+```
+   Then commit the refreshed `requirements.txt`.
 
 3. Install frontend dependencies:
-   ```bash
+```bash
    cd frontend && npm install
-   ```
+```
 
 ## Running the Pipeline
 
